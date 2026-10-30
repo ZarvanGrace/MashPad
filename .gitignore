@@ -1,0 +1,6 @@
+venv/
+__pycache__/
+*.pyc
+# generated when "https": true is set in config.json. These are private keys, never commit them
+cert.pem
+key.pem

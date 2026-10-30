@@ -1,0 +1,9 @@
+{
+  "port": 4040,
+  "max_players": 4,
+  "https": false,
+  "persistent_pads": false,
+  "leave_grace": 8,
+  "stick_deadzone": 0.05,
+  "stick_smoothing": 1.0
+}
