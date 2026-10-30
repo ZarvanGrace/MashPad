@@ -1,0 +1,403 @@
+<!doctype html><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>PocketPad</title>
+<style>
+:root{--bg:#15171c;--ctl:#2b2f38;--on:#4c7dff;--fg:#e8e8e8}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:600 2.6vh system-ui,sans-serif;
+ overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none;overscroll-behavior:none}
+#pad{position:absolute;inset:0}
+.c,.fb{position:absolute;transform:translate(-50%,-50%);background:var(--ctl);border-radius:50%;
+ display:flex;align-items:center;justify-content:center}
+.c.on,.fb.on{background:var(--on)}
+.c.face{background:none}.fb{width:40%;height:40%}
+.stick i{position:absolute;inset:30%;border-radius:50%;background:#4a4f5c;will-change:transform}
+.stick.on{background:var(--ctl)}.stick.on i{background:var(--on)}
+.dpad{border-radius:30%}
+.dpad b{position:absolute;font-weight:400;opacity:.45}
+.dpad b.on{opacity:1;color:var(--on)}
+[data-d=U]{top:3%;left:50%;transform:translateX(-50%)}[data-d=D]{bottom:3%;left:50%;transform:translateX(-50%)}
+[data-d=L]{left:6%;top:50%;transform:translateY(-50%)}[data-d=R]{right:6%;top:50%;transform:translateY(-50%)}
+.u{width:9vh;height:9vh;font-size:4vh;top:8vh;z-index:2}
+body.edit .u{display:none}body.edit #pad .c{cursor:move}
+.sel{outline:.7vh dashed #fc3}
+#lab{position:absolute;left:50%;top:24%;transform:translateX(-50%);font-size:2.4vh;opacity:.8;white-space:nowrap;text-align:center;line-height:1.4}
+#png{font-size:2vh;font-variant-numeric:tabular-nums}#png.g{color:#5c5}#png.m{color:#fc3}#png.b{color:#f55}
+#st{display:inline-block;width:1.6vh;height:1.6vh;border-radius:50%;background:#d33;margin-right:1vh}
+#st.ok{background:#3c3}
+button,input{font:600 3.2vh system-ui,sans-serif;border:0;border-radius:1.5vh;background:var(--ctl);color:var(--fg);padding:0 2vh;height:8vh}
+#menu{position:fixed;inset:0;background:#000b;display:none;align-items:center;justify-content:center;z-index:5}
+#ml{display:flex;flex-direction:column;gap:1.2vh;width:min(70vw,110vh);max-height:92vh;overflow:auto;touch-action:pan-y}
+.row{display:flex;gap:1vh}.row button:first-child{flex:1;text-align:left}.row.act button:first-child{background:var(--on)}
+#bar{position:fixed;left:50%;transform:translateX(-50%);top:1vh;display:none;gap:1vh;align-items:center;z-index:6}
+#nm{width:24vh;user-select:text;-webkit-user-select:text}
+#pal{position:fixed;left:50%;transform:translateX(-50%);top:11vh;display:none;flex-wrap:wrap;gap:1vh;max-width:90vh;
+ max-height:70vh;overflow:auto;background:#000c;padding:1.5vh;border-radius:2vh;z-index:6;touch-action:pan-y}
+#qr,#scan{position:fixed;inset:0;background:#000e;display:none;flex-direction:column;align-items:center;justify-content:center;gap:1.4vh;z-index:7;text-align:center}
+#qrc{width:min(72vh,80vw);height:min(72vh,80vw);background:#fff;border-radius:1vh}
+#vid{display:none;max-width:90vw;max-height:66vh;border-radius:1vh}.row2{display:flex;gap:1vh}
+#rot{display:none;position:fixed;inset:0;z-index:9;background:var(--bg);align-items:center;justify-content:center;
+ font-size:20px;text-align:center;padding:20px}
+@media(orientation:portrait){#rot{display:flex}}
+</style>
+<div id=rot>Rotate your phone sideways, genius.</div>
+<div id=pad></div>
+<div id=lab><div><span id=st></span><span id=who>connecting...</span></div><div id=png>ping - ms</div></div>
+<div class="c u" id=fs style="left:calc(50% - 8vh)">&#x26F6;</div>
+<div class="c u" id=lay style="left:calc(50% + 8vh)">&#x25A6;</div>
+<div id=menu><div id=ml></div></div>
+<div id=bar>
+ <button id=cx>Cancel</button><input id=nm maxlength=24 placeholder="Name">
+ <button id=ad>+ Add</button><button id=sm>&minus;</button><button id=sp>+</button><button id=dl>Del</button><button id=sv>Save</button>
+</div>
+<div id=pal></div>
+<div id=qr><canvas id=qrc></canvas><div id=qrt></div><button id=qrx>Close</button></div>
+<div id=scan><video id=vid playsinline muted></video><div id=sct></div><div class=row2><button id=scp>Photo instead</button><button id=scx>Cancel</button></div></div>
+<input type=file id=pf accept="image/*" capture="environment" hidden>
+<script>
+const $=s=>document.querySelector(s),st=$("#st"),who=$("#who"),png=$("#png"),pad=$("#pad");
+let PID;try{PID=sessionStorage.pid||(sessionStorage.pid=Math.random().toString(36).slice(2))}catch(e){PID=Math.random().toString(36).slice(2)}
+
+/* ---------- connection ---------- */
+// The pad sends its WHOLE state in one tiny message:  s,<held buttons>,<lx>,<ly>,<rx>,<ry>
+//  - a button change goes out instantly; sticks at most every 10 ms, latest value only, so no backlog can build up
+//  - a copy also goes out every 50 ms when nothing moves: keeps the Wi-Fi radios awake (no wake-up lag on the
+//    next tap) and repairs any missed release by itself
+const BIT={A:0,B:1,X:2,Y:3,LB:4,RB:5,SEL:6,START:7,HOME:8,L3:9,R3:10,LT:11,RT:12,HU:13,HD:14,HL:15,HR:16};
+let ws=null,tries=0,dead=false,lastRx=0,timer=null;
+let held=0,ax=[0,0,0,0],lastSent="",lastTx=0;
+let DZ=.05,SM=1;                                   // stick tuning, the host overrides it from config.json
+const now=()=>performance.now();
+const send=m=>{if(ws&&ws.readyState===1){ws.send(m);return true}return false};
+const snap=()=>"s,"+held+","+ax[0]+","+ax[1]+","+ax[2]+","+ax[3];
+function tx(){const s=snap();if(send(s)){lastSent=s;lastTx=now()}}
+let pingId=0,lastPing=0;const pend=new Map(),rtts=[];   // pings waiting for their answer / last round trips in ms
+function pong(id){
+  const t=pend.get(id);if(t===undefined)return;
+  rtts.push(now()-t);if(rtts.length>10)rtts.shift();
+  for(const k of pend.keys()){if(k<=id)pend.delete(k);else break}   // TCP keeps order: older pings are gone too
+}
+function stalled(){const f=pend.values().next();return !f.done&&now()-f.value>250}
+function connect(){
+  if(dead||(ws&&ws.readyState<2))return;
+  clearTimeout(timer);lastRx=now();
+  const me=ws=new WebSocket((location.protocol==="https:"?"wss://":"ws://")+location.host+"/ws"+location.search+"&pid="+PID);
+  me.t0=now();
+  me.onopen=()=>{tries=0;st.className="ok";pend.clear();tx()};
+  me.onmessage=ev=>{lastRx=now();const m=ev.data;
+    if(m.charCodeAt(0)===112){pong(+m.slice(1));return}   // "p<id>": answer to our ping
+    try{const d=JSON.parse(m);if(d.t==="hi"){who.textContent="P"+(d.slot+1)+" - "+d.name;
+      if(Number.isFinite(d.dz))DZ=Math.min(.9,d.dz);if(Number.isFinite(d.sm))SM=d.sm}}catch(e){}};
+  me.onclose=ev=>{if(ws!==me)return;st.className="";pend.clear();rtts.length=0;
+    if(ev.code===4001){dead=true;who.textContent="Bad link - rescan the QR";return}
+    if(ev.code===4003){dead=true;who.textContent="Host is full";return}
+    if(ev.code===4002){dead=true;who.textContent="Opened in another tab";return}
+    who.textContent="reconnecting...";timer=setTimeout(connect,Math.min(400*2**tries++,5000))};
+}
+function reconnectNow(){if(ws){ws.onclose=null;try{ws.close()}catch(e){}}st.className="";pend.clear();rtts.length=0;connect()}
+
+/* one loop does everything periodic: stick maths, ping, sending, dead-link check */
+const act={L:null,R:null};   // the stick pointers currently touching L / R
+function stickTick(t){
+  for(const n of["L","R"]){
+    const o=act[n],i=n==="L"?0:2;let X=0,Y=0;
+    if(o){
+      const dt=Math.min(.05,Math.max(.001,(t-o.lt)/1e3));o.lt=t;
+      if(SM>0){   // speed-adaptive smoothing: calm while the finger is nearly still, instant when it moves fast
+        const e=Math.hypot(o.x-o.fx,o.y-o.fy),a=1-Math.exp(-(60+800*e)/SM*dt);
+        o.fx+=(o.x-o.fx)*a;o.fy+=(o.y-o.fy)*a;
+      }else{o.fx=o.x;o.fy=o.y}
+      const m=Math.hypot(o.fx,o.fy);
+      if(m>DZ){const k=(m-DZ)/(1-DZ)/m;X=o.fx*k;Y=o.fy*k}   // scaled radial dead zone: 0 at its edge, 1 at full, no jump
+    }
+    ax[i]=Math.max(-32767,Math.min(32767,Math.round(X*32767)));ax[i+1]=Math.max(-32767,Math.min(32767,Math.round(Y*32767)));
+  }
+}
+function tick(){
+  const t=now();stickTick(t);
+  if(ws&&ws.readyState===1){
+    if(t-lastPing>=100){lastPing=t;const id=++pingId;pend.set(id,t);if(pend.size>200)pend.delete(pend.keys().next().value);send("p"+id)}
+    const slow=stalled(),gap=slow?200:(snap()!==lastSent?10:50);   // link stalled: stop piling up stale updates
+    if(t-lastTx>=gap)tx();
+    if(t-lastRx>6000)reconnectNow();                               // nothing heard for 6 s: link is dead
+  }else if(ws&&ws.readyState===0&&t-ws.t0>6000)reconnectNow();
+}
+setInterval(tick,10);
+function showPing(){
+  if(!ws||ws.readyState!==1){png.textContent="ping - ms";png.className="";return}
+  let v=rtts.length?rtts.reduce((a,b)=>a+b,0)/rtts.length:NaN,late=false;
+  const f=pend.values().next();
+  if(!f.done&&now()-f.value>250){v=now()-f.value;late=true}        // an answer is overdue: show how long we have been waiting
+  if(Number.isNaN(v)){png.textContent="ping ...";png.className="";return}
+  png.textContent="ping "+Math.round(v)+(late?"+":"")+" ms";png.className=v<40?"g":v<90?"m":"b";
+}
+setInterval(showPing,250);
+document.addEventListener("visibilitychange",()=>{if(!document.hidden){connect();wake()}else releaseAll()});
+async function wake(){try{if(navigator.wakeLock)await navigator.wakeLock.request("screen")}catch(e){}}
+wake();connect();
+window.addEventListener("pagehide",()=>send("bye"));   // tab closed: free the pad right away
+document.oncontextmenu=e=>e.preventDefault();
+
+/* ---------- controls + layouts ---------- */
+const D={A:{c:"btn",l:"A",b:"A"},B:{c:"btn",l:"B",b:"B"},X:{c:"btn",l:"X",b:"X"},Y:{c:"btn",l:"Y",b:"Y"},
+ LB:{c:"sh",l:"LB",b:"LB"},RB:{c:"sh",l:"RB",b:"RB"},LT:{c:"sh",l:"LT",a:"LT"},RT:{c:"sh",l:"RT",a:"RT"},
+ SEL:{c:"pill",l:"BACK",b:"SEL"},HOME:{c:"pill",l:"\u2302",b:"HOME"},START:{c:"pill",l:"START",b:"START"},
+ L3:{c:"r3",l:"L3",b:"L3"},R3:{c:"r3",l:"R3",b:"R3"},SL:{c:"stick",s:"L"},SR:{c:"stick",s:"R"},DP:{c:"dpad"},ABXY:{c:"face"}};
+const RAT={sh:.625,pill:.583},FS={btn:.357,sh:.1625,pill:.18,r3:.24,dpad:.18,face:.143},RAD={sh:.125,pill:.25};
+const DS={btn:14,sh:16,pill:12,r3:10,stick:30,dpad:28,face:35};
+const LBL=k=>({SL:"L stick",SR:"R stick",DP:"D-pad",SEL:"Back",ABXY:"ABXY"}[k]||D[k].l);
+const T=a=>a.map(([k,ax,x,y,s])=>({k,ax,x,y,s}));   // ax: l/r = vh from left/right edge, c = vh from centre; y = % of height; s = size in vh
+const PRE={
+ default:{name:"Default (Xbox)",items:T([["LT","l",11,8,16],["LB","l",31,8,16],["RB","r",31,8,16],["RT","r",11,8,16],
+  ["SEL","c",-13,40,12],["HOME","c",0,40,12],["START","c",13,40,12],["SL","l",26,44,34],["L3","l",12,82,10],["DP","l",50,80,28],
+  ["ABXY","r",26,44,35],["SR","r",50,80,28],["R3","r",12,82,10]])},
+ simple:{name:"Simple: stick + ABXY",items:T([["SL","l",28,55,38],["ABXY","r",26,50,40],["START","c",0,88,12]])},
+ classic:{name:"Classic (PS-style)",items:T([["LT","l",11,8,16],["LB","l",31,8,16],["RB","r",31,8,16],["RT","r",11,8,16],
+  ["SEL","c",-13,35,12],["HOME","c",0,35,12],["START","c",13,35,12],["DP","l",24,38,28],
+  ["ABXY","r",24,38,35],
+  ["SL","c",-24,76,28],["SR","c",24,76,28],["L3","c",-24,54,10],["R3","c",24,54,10]])}};
+let store={active:"default",custom:[]};
+try{const j=JSON.parse(localStorage.getItem("padlayouts1"));if(j&&Array.isArray(j.custom))store=j}catch(e){}
+const persist=()=>{try{localStorage.setItem("padlayouts1",JSON.stringify(store))}catch(e){}};
+const getL=id=>PRE[id]||store.custom.find(c=>c.id===id)||PRE.default;
+const clone=a=>JSON.parse(JSON.stringify(a));
+const X=it=>it.ax==="l"?it.x+"vh":it.ax==="r"?"calc(100% - "+it.x+"vh)":"calc(50% + "+it.x+"vh)";
+let items=[],sel=null,editing=false,editId=null,drag=null;
+
+function mk(it){
+  const d=D[it.k],e=document.createElement("div"),s=it.s;
+  e.className="c "+d.c+(editing&&sel===it.k?" sel":"");e.dataset.id=it.k;
+  if(d.b)e.dataset.b=d.b;if(d.a)e.dataset.a=d.a;if(d.s)e.dataset.s=d.s;if(d.c==="dpad")e.dataset.dp=1;
+  e.style.cssText="left:"+X(it)+";top:"+it.y+"%;width:"+s+"vh;height:"+s*(RAT[d.c]||1)+"vh;font-size:"+s*(FS[d.c]||0)+"vh"+
+    (RAD[d.c]?";border-radius:"+s*RAD[d.c]+"vh":"");
+  if(d.c==="stick")e.innerHTML="<i></i>";
+  else if(d.c==="dpad")e.innerHTML='<b data-d="U">&#9650;</b><b data-d="D">&#9660;</b><b data-d="L">&#9664;</b><b data-d="R">&#9654;</b>';
+  else if(d.c==="face")e.innerHTML=[["Y",50,19],["A",50,81],["X",19,50],["B",81,50]].map(a=>'<div class="fb" data-id="'+a[0]+'" data-b="'+a[0]+'" style="left:'+a[1]+'%;top:'+a[2]+'%">'+a[0]+'</div>').join("");
+  else e.textContent=d.l;
+  return e;
+}
+function render(){
+  pad.textContent="";const seen=new Set();
+  items.forEach(it=>{if(!D[it.k]||seen.has(it.k)||![it.x,it.y,it.s].every(Number.isFinite)||!/^[lrc]$/.test(it.ax))return;
+    seen.add(it.k);pad.append(mk(it))});
+}
+function use(id){store.active=id;persist();items=clone(getL(id).items);resetInput();render()}
+
+/* ---------- play input (slide between buttons) ---------- */
+const ptr=new Map(),TRAVEL=.8;let cnt={},hx=0,hy=0;   // TRAVEL: finger distance for full stick, as a share of the stick's radius
+function resetInput(){ptr.clear();cnt={};hx=hy=0;held=0;act.L=act.R=null;ax=[0,0,0,0];tx()}
+function releaseAll(){resetInput();pad.querySelectorAll(".on").forEach(x=>x.classList.remove("on"));
+  pad.querySelectorAll(".stick i").forEach(i=>i.style.transform="")}
+function press(el,v){
+  const k=el.dataset.id;
+  if(v){cnt[k]=(cnt[k]||0)+1;if(cnt[k]>1)return;el.classList.add("on");if(navigator.vibrate)navigator.vibrate(8)}
+  else{cnt[k]=(cnt[k]||1)-1;if(cnt[k]>0)return;el.classList.remove("on")}
+  const b=BIT[el.dataset.b||el.dataset.a];held=v?held|1<<b:held&~(1<<b);tx();
+}
+function stickMv(o,e){   // the knob sits exactly under the finger (up to full travel); the loop turns it into output
+  let x=(e.clientX-o.cx)/o.T,y=(e.clientY-o.cy)/o.T;const m=Math.hypot(x,y);if(m>1){x/=m;y/=m}
+  o.x=x;o.y=y;o.knob.style.transform="translate("+x*o.T+"px,"+y*o.T+"px)";
+}
+function hat(a,b){
+  if(a===hx&&b===hy)return;
+  hx=a;hy=b;
+  held=(held&~(15<<13))|(b<0?1<<13:0)|(b>0?1<<14:0)|(a<0?1<<15:0)|(a>0?1<<16:0);tx();
+  const dp=$(".dpad");if(dp)dp.querySelectorAll("b").forEach(e=>{const d=e.dataset.d;
+    e.classList.toggle("on",d==="L"?hx<0:d==="R"?hx>0:d==="U"?hy<0:hy>0)});
+}
+function dpMv(el,e){
+  const r=el.getBoundingClientRect(),R=r.width/2,t=.28,x=(e.clientX-r.left-R)/R,y=(e.clientY-r.top-R)/R;
+  hat(x>t?1:x<-t?-1:0,y>t?1:y<-t?-1:0);
+}
+const CTL="[data-b],[data-a],[data-s],[data-dp]",UI="#menu,#bar,#pal,#qr,#scan,.u";
+function begin(e,t){
+  if(!t){ptr.set(e.pointerId,{k:"b",el:null});return}   // finger down on empty space: keep tracking it anyway
+  if(t.dataset.b||t.dataset.a){ptr.set(e.pointerId,{k:"b",el:t,px:e.clientX,py:e.clientY});press(t,1)}
+  else if(t.dataset.s){
+    const r=t.getBoundingClientRect(),n=t.dataset.s,   // measured once per touch, not on every move
+      o={k:"s",el:t,n,knob:t.firstElementChild,cx:r.left+r.width/2,cy:r.top+r.height/2,T:r.width/2*TRAVEL,x:0,y:0,fx:0,fy:0,lt:now()};
+    ptr.set(e.pointerId,o);act[n]=o;
+    try{t.setPointerCapture(e.pointerId)}catch(x){}t.classList.add("on");stickMv(o,e);o.fx=o.x;o.fy=o.y;
+  }
+  else{ptr.set(e.pointerId,{k:"d",el:t});try{t.setPointerCapture(e.pointerId)}catch(x){}dpMv(t,e)}
+}
+document.addEventListener("pointerdown",e=>{
+  if(editing||!e.target.closest||e.target.closest(UI))return;
+  e.preventDefault();begin(e,e.target.closest(CTL));
+});
+document.addEventListener("pointermove",e=>{
+  const o=ptr.get(e.pointerId);if(!o)return;
+  if(o.k==="s")return stickMv(o,e);
+  if(o.k==="d")return dpMv(o.el,e);
+  if(o.px!==undefined&&Math.abs(e.clientX-o.px)+Math.abs(e.clientY-o.py)<2)return;   // barely moved: nothing can have changed
+  o.px=e.clientX;o.py=e.clientY;
+  const n=document.elementFromPoint(e.clientX,e.clientY),t=n&&n.closest(CTL);
+  if(t&&(t.dataset.s||t.dataset.dp)){if(o.el)press(o.el,0);begin(e,t);return}   // slid onto a stick or the d-pad
+  const b=t&&(t.dataset.b||t.dataset.a)?t:null;
+  if(b!==o.el){if(o.el)press(o.el,0);o.el=b;if(b)press(b,1)}   // slid onto another button, or off into empty space
+});
+const end=e=>{
+  const o=ptr.get(e.pointerId);if(!o)return;ptr.delete(e.pointerId);
+  if(o.k==="b"){if(o.el)press(o.el,0)}
+  else if(o.k==="s"){o.knob.style.transform="";o.el.classList.remove("on");
+    if(act[o.n]===o){act[o.n]=null;stickTick(now());tx()}}   // let go: output snaps to exactly 0 at once
+  else hat(0,0);
+};
+document.addEventListener("pointerup",end);document.addEventListener("pointercancel",end);
+
+/* ---------- layout menu ---------- */
+const menu=$("#menu"),ml=$("#ml"),bar=$("#bar"),pal=$("#pal"),nm=$("#nm");
+const btn=(t,f)=>{const b=document.createElement("button");b.textContent=t;b.onclick=f;return b};
+function openMenu(){
+  ml.textContent="";
+  const all=Object.entries(PRE).map(([id,l])=>({id,name:l.name,pre:1})).concat(store.custom.map(c=>({id:c.id,name:c.name})));
+  all.forEach(l=>{
+    const row=document.createElement("div");row.className="row"+(l.id===store.active?" act":"");
+    row.append(btn(l.name,()=>{use(l.id);menu.style.display="none"}),
+      btn("Edit",()=>startEdit(getL(l.id).items,l.pre?null:l.id,l.pre?l.name+" copy":l.name)));
+    if(!l.pre){row.append(btn("QR",()=>showQR(getL(l.id))));const d=btn("Del",()=>{
+      if(!d.dataset.s){d.dataset.s=1;d.textContent="Sure?";return}
+      store.custom=store.custom.filter(c=>c.id!==l.id);
+      if(store.active===l.id)use("default");else persist();openMenu()});row.append(d)}
+    ml.append(row);
+  });
+  const r2=document.createElement("div");r2.className="row";
+  r2.append(btn("+ New custom layout",()=>startEdit(getL(store.active).items,null,"My layout")),btn("Scan QR",scanQR));
+  ml.append(r2,btn("Close",()=>menu.style.display="none"));
+  menu.style.display="flex";
+}
+$("#lay").onclick=openMenu;
+
+/* ---------- layout editor ---------- */
+function startEdit(src,id,name){
+  menu.style.display="none";editing=true;editId=id;sel=null;items=clone(src);nm.value=name.slice(0,24);
+  document.body.classList.add("edit");bar.style.display="flex";resetInput();render();
+}
+function stopEdit(){
+  editing=false;drag=null;document.body.classList.remove("edit");bar.style.display="none";pal.style.display="none";
+  items=clone(getL(store.active).items);render();
+}
+$("#cx").onclick=stopEdit;
+$("#sv").onclick=()=>{
+  let c=store.custom.find(x=>x.id===editId);
+  if(!c){c={id:"c"+Date.now().toString(36)};store.custom.push(c)}
+  c.name=nm.value.trim().slice(0,24)||"My layout";c.items=clone(items);store.active=c.id;persist();stopEdit();
+};
+function sz(f){const it=items.find(i=>i.k===sel);if(!it)return;it.s=Math.max(5,Math.min(70,Math.round(it.s*f*2)/2));render()}
+$("#sm").onclick=()=>sz(.9);$("#sp").onclick=()=>sz(1.1);
+$("#dl").onclick=()=>{if(!sel)return;items=items.filter(i=>i.k!==sel);sel=null;render()};
+$("#ad").onclick=()=>{
+  if(pal.style.display==="flex"){pal.style.display="none";return}
+  const have=new Set(items.map(i=>i.k)),one=["A","B","X","Y"],miss=Object.keys(D).filter(k=>!have.has(k)&&!one.includes(k)&&!(k==="ABXY"&&one.some(s=>have.has(s))));
+  pal.textContent=miss.length?"":"Everything is already on screen.";
+  miss.forEach(k=>pal.append(btn(LBL(k),()=>{items.push({k,ax:"c",x:0,y:50,s:DS[D[k].c]});sel=k;pal.style.display="none";render()})));
+  pal.style.display="flex";
+};
+pad.addEventListener("pointerdown",e=>{
+  if(!editing)return;e.preventDefault();
+  const t=e.target.closest(".c");
+  pad.querySelectorAll(".sel").forEach(x=>x.classList.remove("sel"));
+  if(!t){sel=null;return}
+  sel=t.dataset.id;t.classList.add("sel");
+  const r=t.getBoundingClientRect();
+  drag={id:e.pointerId,dx:e.clientX-(r.left+r.width/2),dy:e.clientY-(r.top+r.height/2),it:items.find(i=>i.k===sel)};
+  try{t.setPointerCapture(e.pointerId)}catch(x){}
+});
+pad.addEventListener("pointermove",e=>{
+  if(!drag||e.pointerId!==drag.id)return;
+  const pr=pad.getBoundingClientRect(),W=pr.width,probe=document.createElement("div");
+  probe.style.cssText="position:absolute;height:100vh;width:0";document.body.append(probe);
+  const v=probe.getBoundingClientRect().height/100;probe.remove();
+  const px=e.clientX-drag.dx-pr.left,py=e.clientY-drag.dy-pr.top,it=drag.it,r=n=>Math.round(n*2)/2;
+  it.y=Math.max(0,Math.min(100,r(py/pr.height*100)));
+  if(px<W/3){it.ax="l";it.x=Math.max(0,r(px/v))}
+  else if(px>W*2/3){it.ax="r";it.x=Math.max(0,r((W-px)/v))}
+  else{it.ax="c";it.x=r((px-W/2)/v)}
+  const el=pad.querySelector('[data-id="'+it.k+'"]');el.style.left=X(it);el.style.top=it.y+"%";
+});
+const dend=e=>{if(drag&&e.pointerId===drag.id)drag=null};
+pad.addEventListener("pointerup",dend);pad.addEventListener("pointercancel",dend);
+
+/* ---------- QR share / scan ---------- */
+const libs={};
+const lib=src=>libs[src]||(libs[src]=fetch(src).then(r=>{if(!r.ok)throw new Error("HTTP "+r.status+" for "+src);return r.text()})
+  .then(t=>{const s=document.createElement("script");s.text=t;document.head.append(s)}).catch(e=>{delete libs[src];throw e}));
+function encL(name,its){return"PADL1|"+encodeURIComponent(name)+"|"+its.map(i=>[i.k,i.ax,i.x,i.y,i.s].join(",")).join(";")}
+function decL(t){
+  try{
+    const p=String(t).split("|");if(p[0]!=="PADL1"||p.length!==3)return null;
+    const seen=new Set(),out=[];
+    for(const s of p[2].split(";")){
+      const a=s.split(","),k=a[0],ax=a[1],n=[+a[2],+a[3],+a[4]];
+      if(!D[k]||seen.has(k)||!/^[lrc]$/.test(ax)||!n.every(Number.isFinite))continue;
+      seen.add(k);out.push({k,ax,x:n[0],y:Math.max(0,Math.min(100,n[1])),s:Math.max(5,Math.min(70,n[2]))});
+    }
+    return out.length?{name:decodeURIComponent(p[1]).slice(0,24)||"Shared",items:out}:null;
+  }catch(e){return null}
+}
+const qr=$("#qr"),qrc=$("#qrc"),qrt=$("#qrt");
+async function showQR(c){
+  qrt.textContent="Loading...";qr.style.display="flex";
+  try{await lib("/js/qrcode.js")}catch(e){qrt.textContent="Could not load the QR library ("+e.message+")";return}
+  const q=qrcode(0,"M");q.addData(encL(c.name,c.items));q.make();
+  const n=q.getModuleCount(),cell=8,m=4,sz=(n+2*m)*cell,x=qrc.getContext("2d");
+  qrc.width=qrc.height=sz;x.fillStyle="#fff";x.fillRect(0,0,sz,sz);x.fillStyle="#000";
+  for(let r=0;r<n;r++)for(let k=0;k<n;k++)if(q.isDark(r,k))x.fillRect((k+m)*cell,(r+m)*cell,cell,cell);
+  qrt.textContent=c.name+" - scan it from another phone: Layouts > Scan QR";
+}
+$("#qrx").onclick=()=>qr.style.display="none";
+
+const scan=$("#scan"),vid=$("#vid"),pf=$("#pf"),sct=$("#sct");let stream=null,scanning=false;
+function stopScan(){scanning=false;if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}
+  vid.srcObject=null;vid.style.display="none";scan.style.display="none"}
+function gotCode(text){
+  const l=decL(text);if(!l)return false;
+  stopScan();const c={id:"c"+Date.now().toString(36),name:l.name,items:l.items};
+  store.custom.push(c);use(c.id);openMenu();return true;
+}
+function decodeFrame(src,sw,sh,max){
+  const f=Math.min(1,max/Math.max(sw,sh)),w=Math.round(sw*f),h=Math.round(sh*f),cv=decodeFrame.cv||(decodeFrame.cv=document.createElement("canvas"));
+  cv.width=w;cv.height=h;const x=cv.getContext("2d",{willReadFrequently:true});x.drawImage(src,0,0,w,h);
+  const r=jsQR(x.getImageData(0,0,w,h).data,w,h);return r&&r.data;
+}
+async function liveScan(){
+  scan.style.display="flex";sct.textContent="Starting camera...";
+  try{
+    await lib("/js/jsQR.js");
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"},audio:false});
+    vid.srcObject=stream;await vid.play();vid.style.display="block";
+  }catch(e){sct.textContent="Camera not available ("+(e.message||e.name||"error")+"). Try \"Photo instead\".";return}
+  sct.textContent="Point the camera at the layout QR";scanning=true;
+  const tick=()=>{
+    if(!scanning)return;
+    if(vid.videoWidth){const t=decodeFrame(vid,vid.videoWidth,vid.videoHeight,640);
+      if(t&&gotCode(t))return;if(t)sct.textContent="That QR is not a Pad layout"}
+    setTimeout(tick,120);
+  };tick();
+}
+function scanQR(){
+  // live camera needs HTTPS; on plain http we open the camera app and read the photo instead
+  if(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia)liveScan();else pf.click();
+}
+$("#scp").onclick=()=>pf.click();$("#scx").onclick=stopScan;
+pf.onchange=async()=>{
+  const f=pf.files&&pf.files[0];pf.value="";if(!f)return;
+  scan.style.display="flex";sct.textContent="Reading photo...";
+  try{
+    await lib("/js/jsQR.js");const b=await createImageBitmap(f);
+    const t=decodeFrame(b,b.width,b.height,1000)||decodeFrame(b,b.width,b.height,1800);
+    if(t&&gotCode(t))return;
+    sct.textContent=t?"That QR is not a Pad layout":"No QR found. Try again: closer, steady, whole code in frame.";
+  }catch(e){sct.textContent="Could not read the photo ("+e.message+")"}
+};
+
+/* ---------- fullscreen ---------- */
+const fs=$("#fs"),de=document.documentElement;
+if(!(de.requestFullscreen||de.webkitRequestFullscreen))fs.style.display="none";
+fs.onclick=async()=>{try{
+  if(document.fullscreenElement||document.webkitFullscreenElement){await(document.exitFullscreen||document.webkitExitFullscreen).call(document)}
+  else{await(de.requestFullscreen||de.webkitRequestFullscreen).call(de);try{await screen.orientation.lock("landscape")}catch(e){}}
+}catch(e){}};
+
+items=clone(getL(store.active).items);render();
+</script>
