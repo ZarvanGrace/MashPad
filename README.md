@@ -1,4 +1,4 @@
-# PocketPad
+# MashPad
 
 Turn your phone into a gamepad over your LAN.
 
