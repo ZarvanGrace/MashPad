@@ -1,10 +1,10 @@
 # Third-party licenses
 
-PocketPad ships two small QR-code libraries in `js/`, unmodified. Their licenses require that
+MashPad ships two small QR-code libraries in `js/`, unmodified. Their licenses require that
 their copyright notice and license text travel with them, which is what this file is for.
 The Python packages in `requirements.txt` are installed from PyPI by you and are not part of this repo.
 
-"QR Code" is a registered trademark of DENSO WAVE INCORPORATED. PocketPad is not affiliated with or
+"QR Code" is a registered trademark of DENSO WAVE INCORPORATED. MashPad is not affiliated with or
 endorsed by DENSO WAVE.
 
 ---
