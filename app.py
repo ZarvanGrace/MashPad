@@ -1,4 +1,3 @@
-"""PocketPad: one app. Run on the laptop, scan the QR with your phone (same Wi-Fi)."""
 import asyncio, json, os, re, secrets, shutil, socket, ssl, subprocess, sys, time
 from collections import deque
 from aiohttp import web, WSMsgType
@@ -19,8 +18,8 @@ PERSIST = bool(cfg["persistent_pads"])   # True = make all pads at startup (for 
 GRACE = float(cfg["leave_grace"])        # seconds a disconnected phone keeps its pad, so Wi-Fi blips are harmless
 DEADZONE = max(0.0, min(0.5, float(cfg["stick_deadzone"])))    # tiny, only to ignore finger jitter near the centre (the game adds its own)
 SMOOTH = max(0.0, min(5.0, float(cfg["stick_smoothing"])))     # 0 = off, 1 = default, higher = smoother but laggier
-MIN_HOLD = 0.025   # a pressed button stays down at least 50 ms, so games can't miss a tap
-MIN_GAP = 0.02   # and stays up at least 25 ms, so two quick taps stay two taps
+MIN_HOLD = 0.025   # a pressed button stays down at least 25 ms, so games can't miss a tap
+MIN_GAP = 0.02   # and stays up at least 20 ms, so two quick taps stay two taps
 SILENCE = 1.5     # a connected phone that sends nothing for this long (asleep, Wi-Fi gone) lets go of everything
 
 # One bit per control. The order is shared with pad.html, so don't reorder it.
@@ -48,7 +47,7 @@ pads = {}      # slot -> UInput, only filled when persistent_pads is on
 
 
 def make_pad(slot):  # looks like an Xbox 360 pad so every game accepts it
-    return UInput(CAPS, name=f"Phone Pad {slot + 1}", vendor=0x045E, product=0x028E,
+    return UInput(CAPS, name=f"MashPad {slot + 1}", vendor=0x045E, product=0x028E,
                   version=0x110, bustype=e.BUS_USB)
 
 
@@ -141,10 +140,13 @@ def remove(pid):
     if p:
         try:
             release_all(p)
-            if not PERSIST:
-                p["ui"].close()   # unplugged: the game sees the controller disappear
         except Exception:
             pass
+        if not PERSIST:
+            try:
+                p["ui"].close()   # unplugged: the game sees the controller disappear
+            except Exception:
+                pass
         print(f"Player {p['slot'] + 1} left", flush=True)
         report()
 
@@ -211,7 +213,8 @@ async def ws_play(request):
 async def index(request):
     if request.query.get("k") != TOKEN:
         return web.Response(text="Scan the QR code shown in the laptop terminal.", status=403)
-    return web.Response(text=open(PADFILE, encoding="utf-8").read(), content_type="text/html")
+    with open(PADFILE, encoding="utf-8") as f:
+        return web.Response(text=f.read(), content_type="text/html")
 
 
 LIBS = {"qrcode.js", "jsQR.js"}
@@ -229,7 +232,7 @@ def make_ctx(ip):  # self-signed cert, only used when config.json has "https": t
     cert, key = os.path.join(BASE, "cert.pem"), os.path.join(BASE, "key.pem")
     if not (os.path.exists(cert) and os.path.exists(key)):
         subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", key, "-out", cert,
-                        "-days", "825", "-subj", "/CN=phonepad", "-addext", f"subjectAltName=IP:{ip}"],
+                        "-days", "825", "-subj", "/CN=mashpad", "-addext", f"subjectAltName=IP:{ip}"],
                        check=True, capture_output=True)
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.load_cert_chain(cert, key)
@@ -262,17 +265,28 @@ async def bg(app):
         ui.close()
 
 
+SKIP_IFACES = ("docker", "veth", "br-", "virbr", "tun", "tailscale", "wg")
+
+
 def lan_ip():
     for target in ("10.255.255.255", "8.8.8.8"):
         try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect((target, 1))
-            ip = s.getsockname()[0]
-            s.close()
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.connect((target, 1))
+                ip = s.getsockname()[0]
             if not ip.startswith("127."):
                 return ip
         except Exception:
             pass
+    # no route out (happens when the laptop is the hotspot), so read the interfaces directly
+    try:
+        out = subprocess.run(["ip", "-4", "-o", "addr", "show", "scope", "global"],
+                             capture_output=True, text=True, timeout=2).stdout
+        for ifc, addr in re.findall(r"^\d+:\s+(\S+)\s+inet (\d+\.\d+\.\d+\.\d+)/", out, re.M):
+            if not ifc.startswith(SKIP_IFACES) and not addr.startswith("127."):
+                return addr
+    except Exception:
+        pass
     return "127.0.0.1"
 
 
