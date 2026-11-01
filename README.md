@@ -38,7 +38,7 @@ If it turns into a growing number with a "+", the link is stalling right then.
 
 ## License
 
-PocketPad is released under the [MIT License](LICENSE).
+MashPad is released under the [MIT License](LICENSE).
 
 It bundles two third-party libraries in `js/`, unmodified, under their own licenses:
 
