@@ -2,10 +2,9 @@
 
 Turn your phone into a gamepad over your LAN. Scan a QR code, get a virtual Xbox 360 controller on your Linux machine. Works on Wayland and X11.
 
-<p>
-  <img src="docs/screenshot-1.png" width="300" alt="MashPad controller on a phone">
-  <img src="docs/screenshot-2.png" width="300" alt="MashPad QR code in the terminal">
-</p>
+<img src="docs/screenshot-1.png" width="600" alt="MashPad screenshot 1">
+<img src="docs/screenshot-2.png" width="600" alt="MashPad screenshot 2">
+<img src="docs/screenshot-3.png" width="600" alt="MashPad screenshot 3">
 
 ## Install
 
